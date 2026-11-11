@@ -1,0 +1,17 @@
+.dsh/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.ruff_cache/
+.pytest_cache/
+
+# 依赖导出副产物（以 uv.lock 为准，不要提交）
+requirements.txt
+
+# 数据（不入库）
+data/raw/
+data/processed/
+submissions/*.csv
