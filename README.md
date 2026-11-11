@@ -33,7 +33,7 @@ Taarifa 把各地上报的水泵信息汇聚成一张「现实世界版的 bug t
 
 ## 3. 数据与字段
 
-原始数据已就位，四个文件都在 `data/raw/`（未纳入版本库）：
+原始数据已就位，四个文件都在 `data/raw/`，并随仓库一起提交（`.gitattributes` 已关闭这几个文件的换行转换，保证检出后字节不变、MD5 可对上）：
 
 | 文件 | 内容 | 形状 | 大小 | MD5 |
 | --- | --- | --- | --- | --- |
@@ -233,9 +233,10 @@ Pump-it-Up/
 ├── uv.lock                # 锁文件，复现依据
 ├── .python-version        # 固定 Python 3.12
 ├── .gitignore
+├── .gitattributes         # 数据文件禁止换行转换，保证 MD5 可复现
 ├── .venv/                 # uv sync 生成，不入库
 ├── data/
-│   ├── raw/               # 官方四个 CSV，不入库（MD5 见 §3）
+│   ├── raw/               # 官方四个 CSV，已入库（MD5 见 §3）
 │   └── processed/         # 清洗、特征工程后的特征表
 ├── notebooks/             # EDA 与实验笔记本
 ├── src/

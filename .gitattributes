@@ -1,0 +1,5 @@
+# 默认按文本处理，自动识别/转换换行
+* text=auto
+
+# 原始数据必须字节级一致：关掉换行转换，否则 autocrlf=true 的机器检出后 MD5 会变
+data/raw/*.csv -text
