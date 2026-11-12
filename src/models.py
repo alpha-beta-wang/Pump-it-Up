@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from xgboost import XGBClassifier
 
 from . import config
@@ -62,6 +62,19 @@ def build(name: str, seed: int = config.SEED, **overrides):
         )
         params.update(overrides)
         return RandomForestClassifier(**params)
+
+    if name == "et":
+        # Extra-trees: same family as RF but random split thresholds, so its
+        # errors differ enough to matter in the blend.
+        params = dict(
+            n_estimators=400,
+            min_samples_leaf=2,
+            max_features="sqrt",
+            n_jobs=8,
+            random_state=seed,
+        )
+        params.update(overrides)
+        return ExtraTreesClassifier(**params)
 
     if name == "xgb":
         params = dict(
