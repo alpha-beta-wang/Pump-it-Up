@@ -55,6 +55,9 @@ def main() -> None:
     parser.add_argument(
         "--stack-only", action="store_true", help="skip the weight grid, run stacking only"
     )
+    parser.add_argument(
+        "--equal", action="store_true", help="uniform weights, nothing fitted on OOF"
+    )
     args = parser.parse_args()
 
     train_df, test_df = data.load_base()
@@ -68,6 +71,19 @@ def main() -> None:
 
     single = {name: evaluate.accuracy(y, oof) for name, oof in zip(args.members, oofs, strict=True)}
     print("single models:", {k: round(v, 4) for k, v in single.items()})
+
+    if args.equal:
+        uniform = np.full(len(oofs), 1.0 / len(oofs))
+        score = evaluate.accuracy(y, _blend(oofs, uniform))
+        print(f"equal-weight blend: {score:.4f} (no parameters fitted)")
+        blended_test = _blend(test_probas, uniform)
+        pred = np.array(config.CLASSES)[blended_test.argmax(axis=1)]
+        submission = data.load_submission_format()
+        out = config.SUBMISSIONS / f"sub_{args.name}.csv"
+        evaluate.write_submission(submission, pred, out)
+        evaluate.validate_submission(out, submission)
+        print(f"submission written to {out}")
+        return
 
     if args.stack_only:
         _stack(oofs, test_probas, y, folds, name=f"{args.name}_stack")
