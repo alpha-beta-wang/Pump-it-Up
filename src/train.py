@@ -15,6 +15,7 @@ import argparse
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -32,20 +33,44 @@ def _fit_one_fold(
     X_test: pd.DataFrame | None,
     use_te: bool,
     seed: int,
+    y_valid: np.ndarray | None = None,
+    model_params: dict | None = None,
+    early_stop_rounds: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Fit a single fold, applying target encoding inside the fold only."""
+    """Fit a single fold, applying target encoding inside the fold only.
+
+    ``early_stop_rounds`` is meant for hyper-parameter search only: stopping on
+    the validation fold makes the resulting score optimistic, so the chosen
+    configuration must be re-run without it before being reported.
+    """
     if use_te:
         X_train, X_valid, X_test = encoding.encode_fold(
             X_train, y_train, X_valid, X_test, seed=seed
         )
 
-    estimator = models.build(model_name, seed=seed)
+    estimator = models.build(model_name, seed=seed, **(model_params or {}))
     if model_name == "catboost":
         cat_features = models.categorical_columns(X_train)
-        X_train = models.to_catboost_frame(X_train)
-        X_valid = models.to_catboost_frame(X_valid)
-        X_test = models.to_catboost_frame(X_test) if X_test is not None else None
-        estimator.fit(X_train, y_train, cat_features=cat_features)
+        X_train_cb = models.to_catboost_frame(X_train)
+        X_valid_cb = models.to_catboost_frame(X_valid)
+        X_test_cb = models.to_catboost_frame(X_test) if X_test is not None else None
+        if early_stop_rounds:
+            estimator.fit(
+                X_train_cb,
+                y_train,
+                cat_features=cat_features,
+                eval_set=(X_valid_cb, y_valid),
+                early_stopping_rounds=early_stop_rounds,
+                verbose=False,
+            )
+        else:
+            estimator.fit(X_train_cb, y_train, cat_features=cat_features)
+        X_valid, X_test = X_valid_cb, X_test_cb
+    elif model_name == "xgb":
+        X_train = models.to_xgb_frame(X_train)
+        X_valid = models.to_xgb_frame(X_valid)
+        X_test = models.to_xgb_frame(X_test) if X_test is not None else None
+        estimator.fit(X_train, y_train)
     else:
         estimator.fit(X_train, y_train)
 
@@ -62,6 +87,9 @@ def run_cv(
     X_test: pd.DataFrame | None = None,
     use_te: bool = False,
     seed: int = config.SEED,
+    model_params: dict | None = None,
+    early_stop_rounds: int | None = None,
+    verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Fit one model per fold; return OOF probabilities and the test mean."""
     n_classes = len(config.CLASSES)
@@ -79,13 +107,18 @@ def run_cv(
             X_test,
             use_te,
             seed,
+            y_valid=y[valid_mask],
+            model_params=model_params,
+            early_stop_rounds=early_stop_rounds,
         )
         oof[valid_mask] = valid_proba
         if test_proba is not None:
             fold_test_probas.append(test_proba)
-        print(
-            f"  fold {fold}: n_train={train_mask.sum()} accuracy={evaluate.accuracy(y[valid_mask], oof[valid_mask]):.4f}"
-        )
+        if verbose:
+            print(
+                f"  fold {fold}: n_train={train_mask.sum()} "
+                f"accuracy={evaluate.accuracy(y[valid_mask], oof[valid_mask]):.4f}"
+            )
 
     test_proba = np.mean(fold_test_probas, axis=0) if fold_test_probas else None
     return oof, test_proba
@@ -104,9 +137,12 @@ def main() -> None:
     parser.add_argument("--name", default="E1", help="experiment id, e.g. E1")
     parser.add_argument("--model", default="lgbm", choices=["lgbm", "catboost", "xgb"])
     parser.add_argument("--encoding", default="none", choices=ENCODINGS)
+    parser.add_argument("--features", default="v1", choices=["v1", "v2"])
     parser.add_argument("--note", default="", help="free-text note for the experiment log")
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--no-test", action="store_true", help="skip fitting on the test set")
+    parser.add_argument("--params", default="{}", help="JSON overrides for the model constructor")
+    parser.add_argument("--params-file", default=None, help="read the JSON overrides from a file")
     args = parser.parse_args()
 
     started = time.time()
@@ -119,12 +155,16 @@ def main() -> None:
         source = "raw csv (run `python -m src.data` to cache)"
     print(f"[{args.name}] data: {source}")
 
-    X_train, X_test, y, class_names = features.build_features(train_df, test_df)
+    X_train, X_test, y, class_names = features.build_features(
+        train_df, test_df, version=args.features
+    )
     folds = data.get_folds(y)
     use_te = args.encoding == "te"
+    raw_params = Path(args.params_file).read_text() if args.params_file else args.params
+    model_params = json.loads(raw_params)
 
     print(
-        f"[{args.name}] model={args.model} encoding={args.encoding} "
+        f"[{args.name}] model={args.model} encoding={args.encoding} features={args.features} "
         f"{X_train.shape[0]} rows x {X_train.shape[1]} features, {len(np.unique(folds))} folds"
     )
     oof, test_proba = run_cv(
@@ -135,6 +175,7 @@ def main() -> None:
         X_test=None if args.no_test else X_test,
         use_te=use_te,
         seed=args.seed,
+        model_params=model_params,
     )
 
     accuracy = evaluate.accuracy(y, oof)
@@ -144,6 +185,8 @@ def main() -> None:
     config.ensure_dirs()
     np.save(config.DATA_PROCESSED / f"oof_{args.name}.npy", oof)
     if test_proba is not None:
+        # Saved so later stages can blend models without retraining.
+        np.save(config.DATA_PROCESSED / f"test_proba_{args.name}.npy", test_proba)
         pred = np.array(class_names)[test_proba.argmax(axis=1)]
         out = config.SUBMISSIONS / f"sub_{args.name}.csv"
         evaluate.write_submission(submission, pred, out)
@@ -158,7 +201,14 @@ def main() -> None:
             "n_features": X_train.shape[1],
             "cv_accuracy": round(accuracy, 4),
             "minutes": round((time.time() - started) / 60, 1),
-            "params": json.dumps({"seed": args.seed, "encoding": args.encoding}),
+            "params": json.dumps(
+                {
+                    "seed": args.seed,
+                    "encoding": args.encoding,
+                    "features": args.features,
+                    **model_params,
+                }
+            ),
             "note": args.note,
         }
     )
