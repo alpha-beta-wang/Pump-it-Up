@@ -22,6 +22,7 @@ TEST_VALUES = DATA_RAW / "TestSetValues.csv"
 SUBMISSION_FORMAT = DATA_RAW / "SubmissionFormat.csv"
 
 FOLDS_FILE = DATA_PROCESSED / "folds.npy"
+BASE_PARQUET = DATA_PROCESSED / "base.parquet"
 EXPERIMENTS_FILE = DOCS / "experiments.csv"
 
 # --- modelling -------------------------------------------------------------

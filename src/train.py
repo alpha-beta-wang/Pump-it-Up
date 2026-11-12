@@ -89,9 +89,14 @@ def main() -> None:
     args = parser.parse_args()
 
     started = time.time()
-    train_df, test_df, submission = data.load_raw()
-    train_df = data.basic_clean(train_df)
-    test_df = data.basic_clean(test_df)
+    submission = data.load_submission_format()
+    if config.BASE_PARQUET.exists():
+        train_df, test_df = data.load_base()
+        source = "cached base.parquet"
+    else:
+        train_df, test_df = data.prepare_base()
+        source = "raw csv (run `python -m src.data` to cache)"
+    print(f"[{args.name}] data: {source}")
 
     X_train, X_test, y, class_names = features.build_features(train_df, test_df)
     folds = data.get_folds(y)

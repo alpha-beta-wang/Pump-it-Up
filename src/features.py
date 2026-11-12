@@ -40,6 +40,24 @@ def _cast_categoricals(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _align_categories(
+    X_train: pd.DataFrame, X_test: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Give both frames one shared category set per column.
+
+    LightGBM/pandas encode categoricals by position, so if test sees a category
+    that train never had, the codes silently mean different things. Taking the
+    union makes the encoding consistent. This uses feature values only, never
+    the labels, so it does not leak anything.
+    """
+    for col in X_train.columns:
+        if isinstance(X_test[col].dtype, pd.CategoricalDtype):
+            categories = X_train[col].cat.categories.append(X_test[col].cat.categories).unique()
+            X_train[col] = X_train[col].cat.set_categories(categories)
+            X_test[col] = X_test[col].cat.set_categories(categories)
+    return X_train, X_test
+
+
 def build_features(
     train: pd.DataFrame, test: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, list[str]]:
@@ -61,8 +79,9 @@ def build_features(
 
     # Align columns in case one side gained a category the other lacks.
     common = [c for c in processed[0].columns if c in processed[1].columns]
-    X_train = processed[0][common]
-    X_test = processed[1][common]
+    X_train = processed[0][common].copy()
+    X_test = processed[1][common].copy()
+    X_train, X_test = _align_categories(X_train, X_test)
 
     y = y_raw.map(config.CLASS_TO_CODE).to_numpy()
     assert not np.isnan(y).any(), "unmapped target values"
