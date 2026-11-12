@@ -66,6 +66,11 @@ def _fit_one_fold(
         else:
             estimator.fit(X_train_cb, y_train, cat_features=cat_features)
         X_valid, X_test = X_valid_cb, X_test_cb
+    elif model_name == "rf":
+        X_train = models.to_ordinal_frame(X_train)
+        X_valid = models.to_ordinal_frame(X_valid)
+        X_test = models.to_ordinal_frame(X_test) if X_test is not None else None
+        estimator.fit(X_train, y_train)
     elif model_name == "xgb":
         X_train = models.to_xgb_frame(X_train)
         X_valid = models.to_xgb_frame(X_valid)
@@ -135,7 +140,7 @@ def log_experiment(record: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a model with fixed folds.")
     parser.add_argument("--name", default="E1", help="experiment id, e.g. E1")
-    parser.add_argument("--model", default="lgbm", choices=["lgbm", "catboost", "xgb"])
+    parser.add_argument("--model", default="lgbm", choices=["lgbm", "catboost", "xgb", "rf"])
     parser.add_argument("--encoding", default="none", choices=ENCODINGS)
     parser.add_argument("--features", default="v1", choices=["v1", "v2", "v3"])
     parser.add_argument("--note", default="", help="free-text note for the experiment log")

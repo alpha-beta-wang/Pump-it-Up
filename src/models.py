@@ -6,9 +6,11 @@ so that later ensemble stages can build the same estimators.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
+from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 
 from . import config
@@ -48,6 +50,19 @@ def build(name: str, seed: int = config.SEED, **overrides):
         params.update(overrides)
         return CatBoostClassifier(**params)
 
+    if name == "rf":
+        # Community solutions report ~0.82 with a plain random forest, so it is
+        # worth having as a diverse member even though boosting is stronger.
+        params = dict(
+            n_estimators=300,
+            min_samples_leaf=3,
+            max_features="sqrt",
+            n_jobs=8,
+            random_state=seed,
+        )
+        params.update(overrides)
+        return RandomForestClassifier(**params)
+
     if name == "xgb":
         params = dict(
             objective="multi:softprob",
@@ -78,6 +93,15 @@ def to_catboost_frame(X: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         if out[col].dtype == "string":
             out[col] = out[col].fillna("missing")
+    return out
+
+
+def to_ordinal_frame(X: pd.DataFrame) -> pd.DataFrame:
+    """Random forests need numbers: encode categories by their code."""
+    out = X.copy()
+    for col in categorical_columns(X):
+        codes = X[col].cat.codes.astype("float32")
+        out[col] = codes.replace(-1, np.nan)
     return out
 
 
