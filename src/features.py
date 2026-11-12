@@ -14,6 +14,8 @@ Two feature sets are available:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -191,3 +193,44 @@ def build_features(
     y = y_raw.map(config.CLASS_TO_CODE).to_numpy()
     assert not np.isnan(y).any(), "unmapped target values"
     return X_train, X_test, y.astype(int), config.CLASSES
+
+
+def save_feature_table(version: str = "v1", path=None) -> Path:
+    """Persist the feature matrix plus target and fold id (stage 3 deliverable).
+
+    Writes one parquet holding train rows (with ``status_group_code`` and
+    ``fold``) followed by test rows (those two columns are NA there), so the
+    matrix can be inspected without re-running the pipeline.
+    """
+    from . import data  # local import keeps the module import graph simple
+
+    train, test = data.load_base()
+    X_train, X_test, y, _ = build_features(train, test, version=version)
+    folds = data.get_folds(y)
+
+    train_out = X_train.assign(
+        status_group_code=y,
+        fold=folds,
+        split="train",
+    )
+    test_out = X_test.assign(
+        status_group_code=pd.NA,
+        fold=pd.NA,
+        split="test",
+    )
+    combined = pd.concat([train_out, test_out], ignore_index=True)
+
+    path = path or (config.DATA_PROCESSED / f"features_{version}.parquet")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(path, index=False)
+    return path
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Persist a feature table.")
+    parser.add_argument("--version", default="v1", choices=["v1", "v2"])
+    args = parser.parse_args()
+    out = save_feature_table(args.version)
+    print(f"wrote {out}")
