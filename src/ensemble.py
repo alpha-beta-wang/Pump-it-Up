@@ -49,6 +49,12 @@ def main() -> None:
     parser.add_argument("--members", nargs="+", required=True, help="experiment ids, e.g. E5 E7")
     parser.add_argument("--name", default="ENS", help="experiment id for the blend")
     parser.add_argument("--step", type=float, default=0.1, help="weight grid step")
+    parser.add_argument(
+        "--stack", action="store_true", help="also fit logistic-regression stacking"
+    )
+    parser.add_argument(
+        "--stack-only", action="store_true", help="skip the weight grid, run stacking only"
+    )
     args = parser.parse_args()
 
     train_df, test_df = data.load_base()
@@ -62,6 +68,10 @@ def main() -> None:
 
     single = {name: evaluate.accuracy(y, oof) for name, oof in zip(args.members, oofs, strict=True)}
     print("single models:", {k: round(v, 4) for k, v in single.items()})
+
+    if args.stack_only:
+        _stack(oofs, test_probas, y, folds, name=f"{args.name}_stack")
+        return
 
     weights = _grid(len(oofs), args.step)
     best_all = max(weights, key=lambda w: evaluate.accuracy(y, _blend(oofs, w)))
@@ -92,6 +102,47 @@ def main() -> None:
     evaluate.write_submission(submission, pred, out)
     evaluate.validate_submission(out, submission)
     print(f"submission written to {out}")
+
+    if args.stack:
+        _stack(oofs, test_probas, y, folds, name=f"{args.name}_stack")
+
+
+def _stacked_features(probas: list[np.ndarray]) -> np.ndarray:
+    return np.concatenate(probas, axis=1)
+
+
+def _stack(
+    oofs: list[np.ndarray],
+    test_probas: list[np.ndarray],
+    y: np.ndarray,
+    folds: np.ndarray,
+    name: str,
+) -> None:
+    """Logistic-regression stacking on OOF probabilities.
+
+    Evaluated fold-by-fold (fit on the other four folds) so the reported score
+    is not the usual optimistic in-sample stacking number.
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    X_oof = _stacked_features(oofs)
+    scores = []
+    for fold in np.unique(folds):
+        fit_mask = folds != fold
+        model = LogisticRegression(max_iter=2000)
+        model.fit(X_oof[fit_mask], y[fit_mask])
+        scores.append(evaluate.accuracy(y[~fit_mask], model.predict_proba(X_oof[~fit_mask])))
+    print(f"stack (fold-honest): {np.mean(scores):.4f} (+/- {np.std(scores):.4f})")
+
+    final = LogisticRegression(max_iter=2000)
+    final.fit(X_oof, y)
+    test_pred = final.predict_proba(_stacked_features(test_probas))
+    pred = np.array(config.CLASSES)[test_pred.argmax(axis=1)]
+    submission = data.load_submission_format()
+    out = config.SUBMISSIONS / f"sub_{name}.csv"
+    evaluate.write_submission(submission, pred, out)
+    evaluate.validate_submission(out, submission)
+    print(f"stacked submission written to {out}")
 
 
 if __name__ == "__main__":

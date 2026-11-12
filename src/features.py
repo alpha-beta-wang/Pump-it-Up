@@ -33,6 +33,20 @@ NULLABLE_COLUMNS = [
     "permit",
 ]
 
+# Columns that the importance ranking (docs/feature_importance.csv) showed to be
+# dead weight: two indicators are constant after coordinate sanitation, and the
+# rest contribute <0.5% each while costing CatBoost a lot of capacity
+# (wpt_name alone has 37,399 categories for 0.17% importance).
+PRUNED_COLUMNS = [
+    "wpt_name",
+    "num_private",
+    "region_code",
+    "district_code",
+    "rec_month",
+    "longitude_is0",
+    "latitude_is0",
+]
+
 KEYWORD_PATTERNS = {
     "kw_well": r"\bwell\b",
     "kw_borehole": r"borehole|bore hole",
@@ -165,7 +179,7 @@ def build_features(
 
     Returns (X_train, X_test, y_encoded, class_names).
     """
-    if version not in ("v1", "v2"):
+    if version not in ("v1", "v2", "v3"):
         raise ValueError(f"unknown feature version: {version}")
 
     y_raw = train[config.TARGET]
@@ -185,6 +199,8 @@ def build_features(
         combined = _add_frequency(combined)
     combined = _cast_categoricals(combined)
     combined = combined.drop(columns=[config.ID])
+    if version == "v3":
+        combined = combined.drop(columns=[c for c in PRUNED_COLUMNS if c in combined.columns])
 
     X_train = combined.iloc[:n_train].reset_index(drop=True)
     X_test = combined.iloc[n_train:].reset_index(drop=True)
@@ -230,7 +246,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Persist a feature table.")
-    parser.add_argument("--version", default="v1", choices=["v1", "v2"])
+    parser.add_argument("--version", default="v1", choices=["v1", "v2", "v3"])
     args = parser.parse_args()
     out = save_feature_table(args.version)
     print(f"wrote {out}")

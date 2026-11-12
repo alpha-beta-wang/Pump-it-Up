@@ -20,7 +20,7 @@ from . import config, data, features, models
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rank features with the final model.")
-    parser.add_argument("--features", default="v1", choices=["v1", "v2"])
+    parser.add_argument("--features", default="v1", choices=["v1", "v2", "v3"])
     parser.add_argument("--out", default=str(config.DOCS / "feature_importance.csv"))
     args = parser.parse_args()
 

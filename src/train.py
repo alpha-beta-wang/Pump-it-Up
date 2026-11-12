@@ -137,7 +137,7 @@ def main() -> None:
     parser.add_argument("--name", default="E1", help="experiment id, e.g. E1")
     parser.add_argument("--model", default="lgbm", choices=["lgbm", "catboost", "xgb"])
     parser.add_argument("--encoding", default="none", choices=ENCODINGS)
-    parser.add_argument("--features", default="v1", choices=["v1", "v2"])
+    parser.add_argument("--features", default="v1", choices=["v1", "v2", "v3"])
     parser.add_argument("--note", default="", help="free-text note for the experiment log")
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--no-test", action="store_true", help="skip fitting on the test set")
