@@ -79,3 +79,13 @@ def to_catboost_frame(X: pd.DataFrame) -> pd.DataFrame:
         if out[col].dtype == "string":
             out[col] = out[col].fillna("missing")
     return out
+
+
+def to_xgb_frame(X: pd.DataFrame) -> pd.DataFrame:
+    """XGBoost's categorical support rejects boolean categories; stringify them."""
+    out = X.copy()
+    for col in categorical_columns(X):
+        categories = X[col].cat.categories
+        if categories.dtype == bool or str(categories.dtype) == "boolean":
+            out[col] = X[col].astype("string").fillna("missing").astype("category")
+    return out

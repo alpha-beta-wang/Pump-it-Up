@@ -147,11 +147,18 @@ def save_base(train: pd.DataFrame, test: pd.DataFrame, path=None) -> None:
 
 
 def load_base(path=None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Read the persisted base table and split it back into train/test."""
+    """Read the persisted base table and split it back into train/test.
+
+    The parquet holds one combined frame, so the test rows carry an all-NaN
+    target column; it is dropped here to keep the target out of the features.
+    """
     path = path or config.BASE_PARQUET
     combined = pd.read_parquet(path)
     train = combined[combined["split"] == "train"].drop(columns=["split"]).reset_index(drop=True)
     test = combined[combined["split"] == "test"].drop(columns=["split"]).reset_index(drop=True)
+    if config.TARGET in test.columns:
+        assert test[config.TARGET].isna().all(), "test rows must not carry labels"
+        test = test.drop(columns=[config.TARGET])
     return train, test
 
 

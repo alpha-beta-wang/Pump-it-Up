@@ -23,6 +23,42 @@ def test_build_features_shapes_and_target():
         assert col in X_train.columns
 
 
+def test_v2_adds_the_documented_feature_groups():
+    train, test = data.prepare_base()
+    X_v1, _, _, _ = features.build_features(train, test, version="v1")
+    X_v2, X_v2_test, _, _ = features.build_features(train, test, version="v2")
+
+    added = set(X_v2.columns) - set(X_v1.columns)
+    assert len(added) > 20
+    assert "missing_pattern" in added
+    assert "geo_cell_1" in added
+    assert "region_x_extraction" in added
+    assert "wpt_name_len" in added
+    assert "subvillage_size" in added
+    # geo_cell_001 was dropped on purpose: too many distinct values
+    assert "geo_cell_001" not in added
+    assert set(X_v2.columns) == set(X_v2_test.columns)
+
+
+def test_train_and_test_share_one_frame():
+    """Group features (village size, frequencies) must use the same scale."""
+    train, test = data.prepare_base()
+    X_train, X_test, _, _ = features.build_features(train, test, version="v2")
+    combined = pd.concat([X_train["subvillage_size"], X_test["subvillage_size"]])
+    assert combined.max() >= 2
+    # a village's size should be identical for its train and test rows
+    key = "subvillage"
+    merged = pd.concat(
+        [
+            X_train[[key, "subvillage_size"]].assign(split="train"),
+            X_test[[key, "subvillage_size"]].assign(split="test"),
+        ],
+        ignore_index=True,
+    )
+    spread = merged.groupby(key, observed=True)["subvillage_size"].nunique()
+    assert spread.max() == 1
+
+
 def test_categorical_codes_are_aligned():
     """A category present only in test must still encode consistently."""
     train = pd.DataFrame(
