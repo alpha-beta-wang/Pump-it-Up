@@ -14,3 +14,6 @@ requirements.txt
 # 生成物（原始数据已入库，见 data/raw/）
 data/processed/
 submissions/*.csv
+
+# notebook 生成的图不入库（notebook 本身留在工作区，不提交也不忽略）
+docs/figures/
