@@ -1,18 +1,26 @@
 """Blend already-trained models without retraining.
 
 Each ``src.train`` run saves ``oof_<name>.npy`` (out-of-fold probabilities) and
-``test_proba_<name>.npy`` (5-fold averaged test probabilities). This module
+``test_proba_<name>.npy`` (fold-averaged test probabilities). This module
 searches blend weights on the OOF matrix and reports an honest estimate: the
 weights are chosen on four folds and scored on the held-out one.
 
+``--families`` switches to the two-level scheme used for the final submission:
+average inside each family of members, then average the families with equal
+weight. That keeps a large family (e.g. four RF variants) from out-voting a
+small one, without fitting any parameter on the OOF matrix.
+
 Usage:
     uv run python -m src.ensemble --members E5 E7 --name ENS1
+    uv run python -m src.ensemble --families configs/families_lean.json --name LEAN
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 
@@ -44,32 +52,112 @@ def _blend(probas: list[np.ndarray], weights: np.ndarray) -> np.ndarray:
     return sum(w * p for w, p in zip(weights, probas, strict=True))
 
 
+def _load_families(path: str | Path) -> dict[str, list[str]]:
+    """Read a ``{"family": [member, ...]}`` JSON file."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("families file must be a non-empty JSON object")
+    families: dict[str, list[str]] = {}
+    for name, members in payload.items():
+        if not isinstance(members, list) or not members:
+            raise ValueError(f"family {name!r} must be a non-empty list of member ids")
+        families[str(name)] = [str(member) for member in members]
+    return families
+
+
+def _family_blend(
+    families: dict[str, list[str]],
+    oof_map: dict[str, np.ndarray],
+    test_map: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Average inside each family, then average families with equal weight."""
+    oof = np.mean(
+        [
+            np.mean([oof_map[m] for m in members], axis=0)
+            for members in families.values()
+        ],
+        axis=0,
+    )
+    test = np.mean(
+        [
+            np.mean([test_map[m] for m in members], axis=0)
+            for members in families.values()
+        ],
+        axis=0,
+    )
+    return oof, test
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Blend saved model probabilities.")
-    parser.add_argument("--members", nargs="+", required=True, help="experiment ids, e.g. E5 E7")
+    parser.add_argument("--members", nargs="+", help="experiment ids, e.g. E5 E7")
+    parser.add_argument(
+        "--families",
+        default=None,
+        help="JSON file mapping family -> members; enables two-level family blending",
+    )
     parser.add_argument("--name", default="ENS", help="experiment id for the blend")
     parser.add_argument("--step", type=float, default=0.1, help="weight grid step")
     parser.add_argument(
         "--stack", action="store_true", help="also fit logistic-regression stacking"
     )
     parser.add_argument(
-        "--stack-only", action="store_true", help="skip the weight grid, run stacking only"
+        "--stack-only",
+        action="store_true",
+        help="skip the weight grid, run stacking only",
     )
     parser.add_argument(
         "--equal", action="store_true", help="uniform weights, nothing fitted on OOF"
     )
     args = parser.parse_args()
+    if not args.members and not args.families:
+        parser.error("give either --members or --families")
 
     train_df, test_df = data.load_base()
     y = train_df[config.TARGET].map(config.CLASS_TO_CODE).to_numpy()
     folds = data.get_folds(y)
+
+    if args.families:
+        families = _load_families(args.families)
+        members = [member for group in families.values() for member in group]
+        oofs, test_probas = _load_members(members)
+        oof_map = dict(zip(members, oofs, strict=True))
+        test_map = dict(zip(members, test_probas, strict=True))
+        missing = [name for name, proba in test_map.items() if proba is None]
+        if missing:
+            raise FileNotFoundError(f"missing test probabilities for: {missing}")
+
+        print(f"single members: {len(members)}")
+        for family, group in families.items():
+            family_oof = np.mean([oof_map[m] for m in group], axis=0)
+            print(
+                f"  {family:<8} members={len(group):<2} "
+                f"family acc={evaluate.accuracy(y, family_oof):.4f}"
+            )
+
+        oof_final, test_final = _family_blend(families, oof_map, test_map)
+        print(
+            f"family-equal blend: {evaluate.accuracy(y, oof_final):.4f} (no parameters fitted)"
+        )
+
+        pred = np.array(config.CLASSES)[test_final.argmax(axis=1)]
+        submission = data.load_submission_format()
+        out = config.SUBMISSIONS / f"sub_{args.name}.csv"
+        evaluate.write_submission(submission, pred, out)
+        evaluate.validate_submission(out, submission)
+        print(f"submission written to {out}")
+        return
+
     oofs, test_probas = _load_members(args.members)
 
     missing = [n for n, p in zip(args.members, test_probas, strict=True) if p is None]
     if missing:
         raise FileNotFoundError(f"missing test probabilities for: {missing}")
 
-    single = {name: evaluate.accuracy(y, oof) for name, oof in zip(args.members, oofs, strict=True)}
+    single = {
+        name: evaluate.accuracy(y, oof)
+        for name, oof in zip(args.members, oofs, strict=True)
+    }
     print("single models:", {k: round(v, 4) for k, v in single.items()})
 
     if args.equal:
@@ -102,10 +190,14 @@ def main() -> None:
         score_mask = folds == fold
         candidate = max(
             weights,
-            key=lambda w: evaluate.accuracy(y[fit_mask], _blend([o[fit_mask] for o in oofs], w)),
+            key=lambda w: evaluate.accuracy(
+                y[fit_mask], _blend([o[fit_mask] for o in oofs], w)
+            ),
         )
         fold_scores.append(
-            evaluate.accuracy(y[score_mask], _blend([o[score_mask] for o in oofs], candidate))
+            evaluate.accuracy(
+                y[score_mask], _blend([o[score_mask] for o in oofs], candidate)
+            )
         )
     mean_score = float(np.mean(fold_scores))
     print(f"fold-honest blend score: {mean_score:.4f} (+/- {np.std(fold_scores):.4f})")
@@ -147,7 +239,9 @@ def _stack(
         fit_mask = folds != fold
         model = LogisticRegression(max_iter=2000)
         model.fit(X_oof[fit_mask], y[fit_mask])
-        scores.append(evaluate.accuracy(y[~fit_mask], model.predict_proba(X_oof[~fit_mask])))
+        scores.append(
+            evaluate.accuracy(y[~fit_mask], model.predict_proba(X_oof[~fit_mask]))
+        )
     print(f"stack (fold-honest): {np.mean(scores):.4f} (+/- {np.std(scores):.4f})")
 
     final = LogisticRegression(max_iter=2000)

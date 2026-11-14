@@ -17,3 +17,9 @@ submissions/*.csv
 
 # notebook 生成的图不入库（notebook 本身留在工作区，不提交也不忽略）
 docs/figures/
+
+# 临时实验脚本与日志（结论已沉淀到 src/ 与 docs/，这里只留工作区）
+.temp/
+
+# 实验登记表是本地流水账，不入库
+docs/experiments.csv

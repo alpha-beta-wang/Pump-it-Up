@@ -1,0 +1,5 @@
+{
+  "CB": ["CB_k10", "E5b", "CLregion"],
+  "RF": ["RF10_k20", "RF6_k20", "RF7_k20", "RF9_k20"],
+  "PART": ["CLRF_region_k10", "CLRF_wptype_k10", "CLRF_kmeans12_k10"]
+}
